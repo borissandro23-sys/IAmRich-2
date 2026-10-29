@@ -1,0 +1,90 @@
+name: Build IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          set -e
+          if [ -d "/Applications/Xcode_16.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.app/Contents/Developer
+          elif [ -d "/Applications/Xcode_15.4.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+          elif [ -d "/Applications/Xcode_15.3.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_15.3.app/Contents/Developer
+          else
+            sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          fi
+          echo "Selected Xcode:"
+          xcodebuild -version
+
+      - name: Build unsigned arm64 IPA
+        run: |
+          set -e
+          xcodebuild \
+            -project IAmRichApp/IAmRich.xcodeproj \
+            -scheme IAmRich \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            -destination 'generic/platform=iOS' \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            build
+
+      - name: Find application
+        run: |
+          set -e
+          APP_PATH=$(find build -type d -name "IAmRich.app" -print -quit)
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: IAmRich.app not found"
+            echo "Available applications:"
+            find build -type d -name "*.app" || true
+            exit 1
+          fi
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+          echo "Found: $APP_PATH"
+
+      - name: Check architecture
+        run: |
+          set -e
+          echo "Checking executable architecture..."
+          EXECUTABLE="$APP_PATH/IAmRich"
+          if [ ! -f "$EXECUTABLE" ]; then
+            echo "ERROR: Executable not found: $EXECUTABLE"
+            exit 1
+          fi
+          file "$EXECUTABLE"
+          lipo -info "$EXECUTABLE"
+
+      - name: Package IPA
+        run: |
+          set -e
+          rm -rf Payload IAmRich.ipa
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/IAmRich.app
+          zip -r IAmRich.ipa Payload
+          echo "IPA created:"
+          ls -lh IAmRich.ipa
+          echo "IPA contents:"
+          unzip -l IAmRich.ipa | head -40
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: IAmRich-ipa
+          path: IAmRich.ipa
+          retention-days: 14
